@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BNHS Virtual Violation Tracker</title>
+    <title>S.M.A.R.T. – Student Monitoring & Accountability Record Tracker</title>
     <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
@@ -27,7 +27,6 @@
         
         #searchList { max-height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
         .search-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-        .search-item:active { background: #e9ecef; }
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -97,14 +96,14 @@
         const db = new Dexie("StudentTrackerDB");
         db.version(1).stores({
             students: "LRN, Name, Grade, Section",
-            logs: "++id, LRN, Name, Grade, Section, violation, date"
+            logs: "++id, LRN, Name, Grade, Section, violation, timestamp"
         });
 
         let scanner = null;
         let activeStudent = null;
         let audioCtx = null;
 
-        function playSound(type) {
+        function playSound(mode) {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') audioCtx.resume();
             
@@ -112,17 +111,20 @@
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
             
-            if (type === 'success') {
-                // High-pitch prominent "Ding-Ding"
-                osc.frequency.setValueAtTime(900, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
-                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
-                
-                // Vibrate if supported
+            if (mode === 'scan') {
+                // High-pitch "Scan" Beep + Vibrate
+                osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.2);
                 if ("vibrate" in navigator) navigator.vibrate(200);
+            } else if (mode === 'save') {
+                // Lower "Confirm" Sound, No Vibration
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
             } else {
+                // Error Sound
                 osc.type = "sawtooth";
                 osc.frequency.setValueAtTime(150, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
@@ -141,7 +143,12 @@
 
             const lastLogs = await db.logs.reverse().limit(5).toArray();
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
-                <tr><td>${log.Name}</td><td>${log.Section}</td><td>${log.violation}</td><td>${log.date.split(',')[1]}</td></tr>
+                <tr>
+                    <td>${log.Name}</td>
+                    <td>${log.Section}</td>
+                    <td>${log.violation}</td>
+                    <td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                </tr>
             `).join('');
         }
 
@@ -171,7 +178,7 @@
             document.getElementById('nameInput').value = "";
             const student = await db.students.get(lrn);
             if (student) {
-                playSound('success');
+                playSound('scan'); // High beep + vibrate
                 activeStudent = student;
                 document.getElementById('nameText').innerText = student.Name;
                 document.getElementById('infoText').innerText = `Grade ${student.Grade} — ${student.Section}`;
@@ -195,12 +202,28 @@
 
         async function saveRecord() {
             if(!activeStudent) return;
+            const violation = document.getElementById('violationType').value;
+            const now = Date.now();
+
+            // PREVENTION LOGIC: Check if this exact student + violation was saved in the last 30 seconds
+            const recentDuplicate = await db.logs
+                .where('LRN').equals(activeStudent.LRN)
+                .and(log => log.violation === violation && (now - log.timestamp) < 30000)
+                .first();
+
+            if (recentDuplicate) {
+                playSound('error');
+                alert("Duplicate entry prevented! Wait 30 seconds to record the same violation for this student.");
+                return;
+            }
+
             await db.logs.add({ 
                 ...activeStudent, 
-                violation: document.getElementById('violationType').value, 
-                date: new Date().toLocaleString() 
+                violation: violation, 
+                timestamp: now 
             });
-            playSound('success');
+
+            playSound('save'); // Lower beep, no vibration
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
@@ -229,14 +252,20 @@
             const logs = await db.logs.toArray();
             if (logs.length === 0) return;
             
-            // Format: MM-DD-YYYY
+            // Format to Excel-friendly date string
+            const exportData = logs.map(l => ({
+                ...l,
+                date: new Date(l.timestamp).toLocaleString()
+            }));
+            delete exportData.timestamp;
+
             const now = new Date();
             const mm = String(now.getMonth() + 1).padStart(2, '0');
             const dd = String(now.getDate()).padStart(2, '0');
             const yyyy = now.getFullYear();
             const fileName = `${mm}-${dd}-${yyyy}_Violation_Report.xlsx`;
 
-            const ws = XLSX.utils.json_to_sheet(logs);
+            const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Report");
             XLSX.writeFile(wb, fileName);
