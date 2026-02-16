@@ -14,7 +14,7 @@
         .header p { font-size: 0.85em; color: #666; margin: 2px 0 10px 0; }
         
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; }
+        h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; text-align: center; }
         button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; }
         .btn-primary { background: #007bff; color: white; }
         .btn-secondary { background: #6c757d; color: white; }
@@ -35,23 +35,18 @@
             text-align: center; min-width: 200px;
         }
 
-        /* BALANCED CAMERA SIZE */
-        #reader { 
-            width: 100%; 
-            max-width: 350px; 
-            max-height: 260px; /* <--- Balanced Height */
-            border-radius: 12px; 
-            background: #000; 
-            margin: 0 auto; 
-            overflow: hidden; 
-        }
-
+        #reader { width: 100%; max-width: 350px; max-height: 260px; border-radius: 12px; background: #000; margin: 0 auto; overflow: hidden; }
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
         #status { font-weight: bold; margin-bottom: 10px; padding: 10px; border-radius: 8px; text-align: center; font-size: 12px; }
-        .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
-        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
-        #searchList { max-height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
-        .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        
+        .search-row { display: flex; gap: 5px; margin-bottom: 10px; justify-content: center; }
+        .search-row input { flex: 1; max-width: 250px; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; text-align: center; }
+        
+        #searchList { max-height: 220px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
+        .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; }
+        .search-item:active { background: #e9ecef; }
+        .close-search { background: #fdfdfd; color: #dc3545; border: 1px solid #eee; font-size: 11px; padding: 5px; margin-top: 5px; cursor: pointer; border-radius: 5px; width: 100%; }
+
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
 
@@ -80,10 +75,10 @@
 
     <div id="quick-toast"></div>
 
-    <div class="card" style="text-align: center;">
+    <div class="card">
         <h3>Manual Search</h3>
         <div class="search-row">
-            <input type="text" id="nameInput" placeholder="Enter student name...">
+            <input type="text" id="nameInput" placeholder="Enter student name..." onkeyup="if(event.key === 'Enter') performSearch()">
             <button class="btn-primary" style="width:auto;" onclick="performSearch()">🔍</button>
         </div>
         <div id="searchList"></div>
@@ -124,7 +119,7 @@
         </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="text-align: center;">
         <h3>System Tools</h3>
         <button class="btn-success" onclick="exportData()">Extract Excel Report</button>
         <hr>
@@ -154,7 +149,7 @@
             const el = document.getElementById('quick-toast');
             el.innerText = msg;
             el.style.display = "block";
-            setTimeout(() => { el.style.display = "none"; }, 3500);
+            setTimeout(() => { el.style.display = "none"; }, 2500);
         }
 
         function playSound(mode) {
@@ -168,12 +163,11 @@
                 osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.2);
-                if ("vibrate" in navigator) navigator.vibrate(200);
             } else if (mode === 'save') {
                 osc.frequency.setValueAtTime(600, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
-            } else if (mode === 'error') { // RESTORED ERROR SOUND
+            } else if (mode === 'error') {
                 osc.type = "sawtooth";
                 osc.frequency.setValueAtTime(150, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
@@ -205,17 +199,37 @@
         async function performSearch() {
             const query = document.getElementById('nameInput').value.trim().toLowerCase();
             const listDiv = document.getElementById('searchList');
-            if (query.length < 2) return;
+            
+            listDiv.innerHTML = "";
+            listDiv.style.display = 'none';
+
+            if (query.length < 2) {
+                quickShow("Type at least 2 letters");
+                return;
+            }
+
             const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(15).toArray();
+            
             if (matches.length > 0) {
                 listDiv.style.display = 'block';
-                listDiv.innerHTML = matches.map(s => `
+                let itemsHtml = matches.map(s => `
                     <div class="search-item" onclick="selectStudent('${s.LRN}')">
-                        <div><strong>${s.Name}</strong><br><small>${s.Grade} - ${s.Section}</small></div>
-                        <span style="color:#007bff;">Select →</span>
+                        <strong>${s.Name}</strong>
+                        <small style="color:#666">${s.Grade} - ${s.Section}</small>
+                        <span style="color:#007bff; font-size:12px; margin-top:4px; font-weight:bold;">[ SELECT ]</span>
                     </div>
                 `).join('');
+                
+                // Add the close button at the bottom of the list
+                listDiv.innerHTML = itemsHtml + `<button class="close-search" onclick="closeSearchList()">✖ Close Results</button>`;
+            } else {
+                quickShow("No student found");
             }
+        }
+
+        function closeSearchList() {
+            document.getElementById('searchList').style.display = 'none';
+            document.getElementById('nameInput').value = "";
         }
 
         async function selectStudent(lrn) {
@@ -251,7 +265,7 @@
             const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
             
             if (dup) { 
-                playSound('error'); // RESTORED SOUND CALL
+                playSound('error');
                 quickShow("Duplicate prevented!"); 
                 return; 
             }
@@ -284,11 +298,11 @@
 
         async function exportData() {
             const logs = await db.logs.toArray();
-            if (logs.length === 0) return;
+            if (logs.length === 0) { quickShow("No records to export"); return; }
             const exportData = logs.map(l => ({
                 LRN: l.LRN, Name: l.Name, Grade: l.Grade, Section: l.Section, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
             }));
-            const fileName = `Violation_Report_${new Date().toLocaleDateString()}.xlsx`;
+            const fileName = `SMART_Report_${new Date().toLocaleDateString()}.xlsx`;
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Report");
