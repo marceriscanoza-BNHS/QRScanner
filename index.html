@@ -21,33 +21,43 @@
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
         
-        /* IMPROVED LAST SCANNED BAR (ABOVE SCANNER) */
         #last-scanned-bar { 
             background: #e7f3ff; color: #007bff; padding: 10px; border-radius: 8px; 
             text-align: center; font-size: 13px; font-weight: bold; margin-bottom: 10px; 
             display: none; border: 1px solid #b3d7ff;
         }
 
-        #toast-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10000; }
-        .toast-box { background: white; padding: 20px; border-radius: 15px; width: 80%; max-width: 300px; text-align: center; }
-        
-        #quick-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 10px 20px; border-radius: 20px; font-size: 12px; display: none; z-index: 9999; }
+        #quick-toast { 
+            position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); 
+            background: rgba(0,0,0,0.85); color: white; padding: 16px 30px; 
+            border-radius: 50px; font-size: 16px; font-weight: bold;
+            display: none; z-index: 9999; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            text-align: center; min-width: 200px;
+        }
 
-        /* SCANNER BOX */
-        #reader { width: 100%; max-width: 350px; border-radius: 12px; background: #000; margin: 0 auto; overflow: hidden; }
+        /* BALANCED CAMERA SIZE */
+        #reader { 
+            width: 100%; 
+            max-width: 350px; 
+            max-height: 260px; /* <--- Balanced Height */
+            border-radius: 12px; 
+            background: #000; 
+            margin: 0 auto; 
+            overflow: hidden; 
+        }
+
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
         #status { font-weight: bold; margin-bottom: 10px; padding: 10px; border-radius: 8px; text-align: center; font-size: 12px; }
-        
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
         .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
-        
         #searchList { max-height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
         .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
 
-        /* Animation for the bar update */
+        #toast-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10000; }
+        .toast-box { background: white; padding: 20px; border-radius: 15px; width: 80%; max-width: 300px; text-align: center; }
+
         @keyframes highlight { 0% { background: #007bff; color: white; } 100% { background: #e7f3ff; color: #007bff; } }
         .updated { animation: highlight 1s ease-out; }
     </style>
@@ -70,7 +80,7 @@
 
     <div id="quick-toast"></div>
 
-    <div class="card" style="text-align: center;>
+    <div class="card" style="text-align: center;">
         <h3>Manual Search</h3>
         <div class="search-row">
             <input type="text" id="nameInput" placeholder="Enter student name...">
@@ -82,7 +92,6 @@
     <div class="card" style="text-align: center;">
         <h3>QR Scanner</h3>
         <div id="last-scanned-bar"></div>
-        
         <button id="startBtn" class="btn-primary" onclick="initScanner()">Open Camera</button>
         <div id="reader"></div>
 
@@ -119,7 +128,6 @@
         <h3>System Tools</h3>
         <button class="btn-success" onclick="exportData()">Extract Excel Report</button>
         <hr>
-        <p style="font-size: 11px; margin-bottom: 5px;">Update Student Roster (CSV):</p>
         <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom:10px;">
         <button class="btn-secondary" onclick="uploadCSV()">Update Roster</button>
         <button class="btn-danger" style="margin-top:20px; opacity:0.5" onclick="clearLogs()">Clear All Records</button>
@@ -146,7 +154,7 @@
             const el = document.getElementById('quick-toast');
             el.innerText = msg;
             el.style.display = "block";
-            setTimeout(() => { el.style.display = "none"; }, 2000);
+            setTimeout(() => { el.style.display = "none"; }, 3500);
         }
 
         function playSound(mode) {
@@ -155,6 +163,7 @@
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
+            
             if (mode === 'scan') {
                 osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
@@ -164,6 +173,11 @@
                 osc.frequency.setValueAtTime(600, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+            } else if (mode === 'error') { // RESTORED ERROR SOUND
+                osc.type = "sawtooth";
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
             }
         }
 
@@ -179,12 +193,10 @@
                 const bar = document.getElementById('last-scanned-bar');
                 bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
-                // Trigger flash animation
                 bar.classList.remove('updated');
                 void bar.offsetWidth; 
                 bar.classList.add('updated');
             }
-            
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
                 <tr><td>${log.Name}</td><td>${log.violation}</td><td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td></tr>
             `).join('');
@@ -224,8 +236,7 @@
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-            // LARGER focus area (250px)
-            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: 250 }, (text) => selectStudent(text.trim()));
+            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: 220 }, (text) => selectStudent(text.trim()));
         }
 
         function cancelScan() {
@@ -238,11 +249,16 @@
             const violation = document.getElementById('violationType').value;
             const now = Date.now();
             const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
-            if (dup) { quickShow("Duplicate prevented!"); return; }
+            
+            if (dup) { 
+                playSound('error'); // RESTORED SOUND CALL
+                quickShow("Duplicate prevented!"); 
+                return; 
+            }
 
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
             playSound('save');
-            quickShow("Violation Saved!");
+            quickShow("Violation Saved ✅");
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
@@ -260,7 +276,7 @@
                 }).filter(Boolean);
                 await db.students.clear();
                 await db.students.bulkPut(data);
-                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students found.`);
+                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students added.`);
                 await refreshUI();
             };
             reader.readAsText(file);
@@ -272,16 +288,14 @@
             const exportData = logs.map(l => ({
                 LRN: l.LRN, Name: l.Name, Grade: l.Grade, Section: l.Section, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
             }));
-            const now = new Date();
-            const fileName = `${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}-${now.getFullYear()}_Violation_Report.xlsx`;
+            const fileName = `Violation_Report_${new Date().toLocaleDateString()}.xlsx`;
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Report");
             XLSX.writeFile(wb, fileName);
         }
 
-        async function clearLogs() { if (confirm("This will delete ALL violation records. Continue?")) { await db.logs.clear(); refreshUI(); quickShow("History Cleared"); } }
+        async function clearLogs() { if (confirm("Clear all records?")) { await db.logs.clear(); refreshUI(); quickShow("Records Cleared"); } }
     </script>
 </body>
 </html>
-
