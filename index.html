@@ -2,20 +2,21 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
     <title>S.M.A.R.T. - Student Tracker</title>
     <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; margin: 10px; background: #f0f2f5; color: #333; }
+        body { font-family: -apple-system, sans-serif; margin: 10px; background: #f0f2f5; color: #333; touch-action: manipulation; }
         .header { text-align: center; margin-bottom: 15px; }
         .header h1 { font-size: 1.4em; color: #0056b3; margin: 0; letter-spacing: 1px; }
         .header p { font-size: 0.85em; color: #666; margin: 2px 0 10px 0; }
         
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
         h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; text-align: center; }
-        button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; }
+        button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; transition: opacity 0.2s; }
+        button:active { opacity: 0.7; }
         .btn-primary { background: #007bff; color: white; }
         .btn-secondary { background: #6c757d; color: white; }
         .btn-success { background: #28a745; color: white; }
@@ -35,17 +36,7 @@
             text-align: center; min-width: 200px;
         }
 
-        /* FIXED SQUARE SCANNER AREA */
-        #reader { 
-            width: 100%; 
-            max-width: 350px; 
-            aspect-ratio: 1 / 1; /* Forces square container */
-            border-radius: 12px; 
-            background: #000; 
-            margin: 0 auto; 
-            overflow: hidden; 
-        }
-
+        #reader { width: 100%; max-width: 350px; aspect-ratio: 1/1; border-radius: 12px; background: #000; margin: 0 auto; overflow: hidden; }
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
         #status { font-weight: bold; margin-bottom: 10px; padding: 10px; border-radius: 8px; text-align: center; font-size: 12px; }
         
@@ -54,8 +45,7 @@
         
         #searchList { max-height: 220px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
         .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; }
-        .search-item:active { background: #e9ecef; }
-        .close-search { background: #fdfdfd; color: #dc3545; border: 1px solid #eee; font-size: 11px; padding: 5px; margin-top: 5px; cursor: pointer; border-radius: 5px; width: 100%; }
+        .close-search { background: #fdfdfd; color: #dc3545; border: 1px solid #eee; font-size: 11px; padding: 8px; cursor: pointer; border-radius: 5px; width: 100%; }
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -74,7 +64,7 @@
         <p>Student Monitoring & Accountability Record Tracker</p>
     </div>
 
-    <div id="status">Checking Database...</div>
+    <div id="status">Syncing Database...</div>
 
     <div id="toast-overlay">
         <div class="toast-box">
@@ -88,7 +78,7 @@
     <div class="card">
         <h3>Manual Search</h3>
         <div class="search-row">
-            <input type="text" id="nameInput" placeholder="Enter student name..." onkeyup="if(event.key === 'Enter') performSearch()">
+            <input type="text" id="nameInput" placeholder="Student name..." onkeyup="if(event.key === 'Enter') performSearch()">
             <button class="btn-primary" style="width:auto;" onclick="performSearch()">🔍</button>
         </div>
         <div id="searchList"></div>
@@ -149,12 +139,12 @@
         let activeStudent = null;
         let audioCtx = null;
 
+        // UI HELPER FUNCTIONS
         function showNotify(msg) {
             document.getElementById('toast-msg').innerText = msg;
             document.getElementById('toast-overlay').style.display = "flex";
         }
         function hideNotify() { document.getElementById('toast-overlay').style.display = "none"; }
-
         function quickShow(msg) {
             const el = document.getElementById('quick-toast');
             el.innerText = msg;
@@ -162,9 +152,11 @@
             setTimeout(() => { el.style.display = "none"; }, 2500);
         }
 
-        function playSound(mode) {
+        // IMPROVED AUDIO (Wakes up on user interaction)
+        async function playSound(mode) {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+            
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
@@ -174,7 +166,8 @@
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.2);
             } else if (mode === 'save') {
-                osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1000, audioCtx.currentTime + 0.1);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
             } else if (mode === 'error') {
@@ -197,9 +190,8 @@
                 const bar = document.getElementById('last-scanned-bar');
                 bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
-                bar.classList.remove('updated');
-                void bar.offsetWidth; 
                 bar.classList.add('updated');
+                setTimeout(() => bar.classList.remove('updated'), 1000);
             }
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
                 <tr><td>${log.Name}</td><td>${log.violation}</td><td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td></tr>
@@ -209,30 +201,18 @@
         async function performSearch() {
             const query = document.getElementById('nameInput').value.trim().toLowerCase();
             const listDiv = document.getElementById('searchList');
-            
             listDiv.innerHTML = "";
-            listDiv.style.display = 'none';
+            if (query.length < 2) { quickShow("Enter at least 2 characters"); return; }
 
-            if (query.length < 2) {
-                quickShow("Type at least 2 letters");
-                return;
-            }
-
-            const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(15).toArray();
-            
+            const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(20).toArray();
             if (matches.length > 0) {
                 listDiv.style.display = 'block';
-                let itemsHtml = matches.map(s => `
+                listDiv.innerHTML = matches.map(s => `
                     <div class="search-item" onclick="selectStudent('${s.LRN}')">
-                        <strong>${s.Name}</strong>
-                        <small style="color:#666">${s.Grade} - ${s.Section}</small>
-                        <span style="color:#007bff; font-size:12px; margin-top:4px; font-weight:bold;">[ SELECT ]</span>
-                    </div>
-                `).join('');
-                listDiv.innerHTML = itemsHtml + `<button class="close-search" onclick="closeSearchList()">✖ Close Results</button>`;
-            } else {
-                quickShow("No student found");
-            }
+                        <strong>${s.Name}</strong><small>${s.Grade} - ${s.Section}</small>
+                        <span style="color:#007bff; font-size:11px; font-weight:bold;">[ SELECT ]</span>
+                    </div>`).join('') + `<button class="close-search" onclick="closeSearchList()">✖ Close</button>`;
+            } else { quickShow("No matches found"); }
         }
 
         function closeSearchList() {
@@ -241,8 +221,7 @@
         }
 
         async function selectStudent(lrn) {
-            document.getElementById('searchList').style.display = 'none';
-            document.getElementById('nameInput').value = "";
+            closeSearchList();
             const student = await db.students.get(lrn);
             if (student) {
                 playSound('scan');
@@ -255,21 +234,22 @@
         }
 
         function initScanner() {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            playSound('scan'); // Force audio context awake
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-
             const config = { 
                 fps: 15, 
-                qrbox: function(viewWidth, viewHeight) {
-                    let minEdge = Math.min(viewWidth, viewHeight);
-                    let boxSize = Math.floor(minEdge * 0.7); 
-                    return { width: boxSize, height: boxSize };
+                qrbox: (w, h) => { 
+                    let size = Math.min(w, h) * 0.7; 
+                    return { width: size, height: size }; 
                 },
                 aspectRatio: 1.0 
             };
-
-            scanner.start({ facingMode: "environment" }, config, (text) => selectStudent(text.trim()));
+            scanner.start({ facingMode: "environment" }, config, (text) => selectStudent(text.trim()))
+                   .catch(err => {
+                       showNotify("Camera Error: " + err);
+                       document.getElementById('startBtn').style.display = 'block';
+                   });
         }
 
         function cancelScan() {
@@ -283,15 +263,11 @@
             const now = Date.now();
             const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
             
-            if (dup) { 
-                playSound('error');
-                quickShow("Duplicate prevented!"); 
-                return; 
-            }
+            if (dup) { playSound('error'); quickShow("Already recorded!"); return; }
 
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
             playSound('save');
-            quickShow("Violation Saved ✅");
+            quickShow("Saved ✅");
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
@@ -299,36 +275,43 @@
 
         async function uploadCSV() {
             const file = document.getElementById('csvFile').files[0];
-            if (!file) return;
+            if (!file) { quickShow("Choose a file first"); return; }
             const reader = new FileReader();
             reader.onload = async (e) => {
-                const rows = e.target.result.split("\n").slice(1);
-                const data = rows.map(r => {
-                    const c = r.split(",");
-                    return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
-                }).filter(Boolean);
-                await db.students.clear();
-                await db.students.bulkPut(data);
-                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students added.`);
-                await refreshUI();
+                try {
+                    const rows = e.target.result.split("\n").slice(1);
+                    const data = rows.map(r => {
+                        const c = r.split(",");
+                        return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
+                    }).filter(Boolean);
+                    if (data.length === 0) throw new Error("File empty or invalid format");
+                    await db.students.clear();
+                    await db.students.bulkPut(data);
+                    showNotify(`Success: ${data.length} students imported.`);
+                    await refreshUI();
+                } catch (err) {
+                    showNotify("Import Failed: Ensure CSV is LRN,Name,Grade,Section");
+                }
             };
             reader.readAsText(file);
         }
 
         async function exportData() {
             const logs = await db.logs.toArray();
-            if (logs.length === 0) { quickShow("No records to export"); return; }
+            if (logs.length === 0) { quickShow("No history to export"); return; }
             const exportData = logs.map(l => ({
                 LRN: l.LRN, Name: l.Name, Grade: l.Grade, Section: l.Section, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
             }));
-            const fileName = `SMART_Report_${new Date().toLocaleDateString()}.xlsx`;
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Report");
-            XLSX.writeFile(wb, fileName);
+            XLSX.utils.book_append_sheet(wb, ws, "Violations");
+            XLSX.writeFile(wb, `SMART_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
 
-        async function clearLogs() { if (confirm("Clear all records?")) { await db.logs.clear(); refreshUI(); quickShow("Records Cleared"); } }
+        async function clearLogs() { if (confirm("Delete all violation history?")) { await db.logs.clear(); refreshUI(); quickShow("All records wiped"); } }
+
+        // CAMERA CLEANUP ON EXIT
+        window.addEventListener('beforeunload', () => { if(scanner) scanner.stop(); });
     </script>
 </body>
 </html>
