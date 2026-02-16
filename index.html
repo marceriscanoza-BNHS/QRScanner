@@ -3,12 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.M.A.R.T. – Student Monitoring & Accountability Record Tracker</title>
+    <title>S.M.A.R.T. - Student Tracker</title>
     <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
     <style>
         body { font-family: -apple-system, sans-serif; margin: 10px; background: #f0f2f5; color: #333; }
+        .header { text-align: center; margin-bottom: 15px; }
+        .header h1 { font-size: 1.4em; color: #0056b3; margin: 0; letter-spacing: 1px; }
+        .header p { font-size: 0.85em; color: #666; margin: 2px 0 10px 0; }
+        
+        /* LAST PROCESSED BAR */
+        #last-scanned-bar { 
+            background: #007bff; color: white; padding: 8px; border-radius: 8px; 
+            text-align: center; font-size: 13px; font-weight: bold; margin-bottom: 10px; display: none;
+            animation: fadeIn 0.5s;
+        }
+
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
         h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; }
         button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; }
@@ -17,41 +28,50 @@
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
         
-        /* SHRUNK SCANNER STYLING */
-        #reader { 
-            width: 100%; 
-            max-width: 350px; /* Limits width on larger screens */
-            max-height: 250px; /* Keeps it from being too tall */
-            border-radius: 12px; 
-            background: #000; 
-            margin: 10px auto; 
-            overflow: hidden; 
-        }
+        #toast-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10000; }
+        .toast-box { background: white; padding: 20px; border-radius: 15px; width: 80%; max-width: 300px; text-align: center; }
+        
+        #quick-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 10px 20px; border-radius: 20px; font-size: 12px; display: none; z-index: 9999; }
 
+        #reader { width: 100%; max-width: 350px; max-height: 250px; border-radius: 12px; background: #000; margin: 10px auto; overflow: hidden; }
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
-        #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 14px; }
+        #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 13px; }
         
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
-        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
-        .search-row button { width: auto; padding: 0 20px; }
+        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
         
         #searchList { max-height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
-        .search-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background: #f8f9fa; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
+    <div class="header">
+        <h1>S.M.A.R.T.</h1>
+        <p>Student Monitoring & Accountability Record Tracker</p>
+    </div>
+
+    <div id="last-scanned-bar"></div>
     <div id="status">Checking Database...</div>
+
+    <div id="toast-overlay">
+        <div class="toast-box">
+            <p id="toast-msg"></p>
+            <button class="btn-primary" style="width:auto; padding: 10px 40px;" onclick="hideNotify()">OK</button>
+        </div>
+    </div>
+
+    <div id="quick-toast"></div>
 
     <div class="card">
         <h3>Manual Search</h3>
         <div class="search-row">
             <input type="text" id="nameInput" placeholder="Enter student name...">
-            <button class="btn-primary" onclick="performSearch()">Search</button>
+            <button class="btn-primary" style="width:auto;" onclick="performSearch()">🔍</button>
         </div>
         <div id="searchList"></div>
     </div>
@@ -63,11 +83,11 @@
 
         <div id="scanResult" style="display:none; text-align: left;" class="result-box">
             <p style="margin:0; color:#666; font-size:11px;">STUDENT IDENTIFIED:</p>
-            <p style="font-size: 18px; font-weight: bold; margin: 5px 0; color: #000;"><span id="nameText"></span></p>
-            <p style="margin: 0 0 15px 0; font-size:14px; color: #444; font-weight: 500;"><span id="infoText"></span></p>
+            <p style="font-size: 18px; font-weight: bold; margin: 5px 0;"><span id="nameText"></span></p>
+            <p style="margin: 0 0 15px 0; font-size:14px; color: #444;"><span id="infoText"></span></p>
             
             <label style="font-size: 12px; font-weight: bold;">Violation:</label>
-            <select id="violationType" style="width:100%; padding:12px; margin:10px 0; border-radius:8px;">
+            <select id="violationType" style="width:100%; padding:12px; margin:10px 0; border-radius:8px; font-size: 16px;">
                 <option value="Improper Haircut">Improper Haircut</option>
                 <option value="Improper Uniform">Improper Uniform</option>
                 <option value="No ID">No ID Card</option>
@@ -84,22 +104,20 @@
         <h3>Recent History</h3>
         <div style="overflow-x: auto;">
             <table>
-                <thead>
-                    <tr><th>Name</th><th>Section</th><th>Violation</th><th>Time</th></tr>
-                </thead>
+                <thead><tr><th>Name</th><th>Violation</th><th>Time</th></tr></thead>
                 <tbody id="historyBody"></tbody>
             </table>
         </div>
     </div>
 
     <div class="card">
-        <h3>Data Management</h3>
-        <button class="btn-success" onclick="exportData()">Extract Report (Excel)</button>
-        <button class="btn-danger" onclick="clearLogs()">Reset Violations</button>
+        <h3>System Tools</h3>
+        <button class="btn-success" onclick="exportData()">Extract Excel Report</button>
         <hr>
-        <p style="font-size: 11px; margin-bottom: 5px; font-weight: bold;">Upload Roster (CSV):</p>
-        <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom: 10px;">
+        <p style="font-size: 11px; margin-bottom: 5px;">Update Student Roster (CSV):</p>
+        <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom:10px;">
         <button class="btn-secondary" onclick="uploadCSV()">Update Roster</button>
+        <button class="btn-danger" style="margin-top:20px; opacity:0.5" onclick="clearLogs()">Clear All Records</button>
     </div>
 
     <script>
@@ -113,14 +131,25 @@
         let activeStudent = null;
         let audioCtx = null;
 
+        function showNotify(msg) {
+            document.getElementById('toast-msg').innerText = msg;
+            document.getElementById('toast-overlay').style.display = "flex";
+        }
+        function hideNotify() { document.getElementById('toast-overlay').style.display = "none"; }
+
+        function quickShow(msg) {
+            const el = document.getElementById('quick-toast');
+            el.innerText = msg;
+            el.style.display = "block";
+            setTimeout(() => { el.style.display = "none"; }, 2000);
+        }
+
         function playSound(mode) {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') audioCtx.resume();
-            
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
-            
             if (mode === 'scan') {
                 osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
@@ -128,14 +157,8 @@
                 if ("vibrate" in navigator) navigator.vibrate(200);
             } else if (mode === 'save') {
                 osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
-            } else {
-                osc.type = "sawtooth";
-                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
-                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
             }
         }
 
@@ -144,18 +167,17 @@
         async function refreshUI() {
             const studentCount = await db.students.count();
             const logCount = await db.logs.count();
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerText = studentCount > 0 ? `✅ READY: ${studentCount} Students | ${logCount} Logs` : `⚠️ NO ROSTER: Upload CSV`;
-            statusDiv.style.background = studentCount > 0 ? "#d4edda" : "#fff3cd";
-
+            document.getElementById('status').innerText = studentCount > 0 ? `DATABASE: ${studentCount} Students | ${logCount} Violations` : `⚠️ NO ROSTER DATA`;
+            
             const lastLogs = await db.logs.reverse().limit(5).toArray();
+            if(lastLogs.length > 0) {
+                const bar = document.getElementById('last-scanned-bar');
+                bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
+                bar.style.display = 'block';
+            }
+            
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
-                <tr>
-                    <td>${log.Name}</td>
-                    <td>${log.Section}</td>
-                    <td>${log.violation}</td>
-                    <td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                </tr>
+                <tr><td>${log.Name}</td><td>${log.violation}</td><td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td></tr>
             `).join('');
         }
 
@@ -163,20 +185,15 @@
             const query = document.getElementById('nameInput').value.trim().toLowerCase();
             const listDiv = document.getElementById('searchList');
             if (query.length < 2) return;
-
             const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(15).toArray();
-
             if (matches.length > 0) {
                 listDiv.style.display = 'block';
                 listDiv.innerHTML = matches.map(s => `
                     <div class="search-item" onclick="selectStudent('${s.LRN}')">
-                        <div><strong>${s.Name}</strong><br><small>${s.Grade}-${s.Section}</small></div>
-                        <span style="color:#007bff; font-weight:bold;">Select →</span>
+                        <div><strong>${s.Name}</strong><br><small>${s.Grade} - ${s.Section}</small></div>
+                        <span style="color:#007bff;">Select →</span>
                     </div>
                 `).join('');
-            } else {
-                listDiv.style.display = 'none';
-                playSound('error');
             }
         }
 
@@ -198,26 +215,11 @@
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-
-            // CAMERA CONFIG FOR IPHONE FOCUS
-            const config = { 
-                fps: 15, 
-                qrbox: { width: 180, height: 180 }, // Smaller qrbox helps iPhone focus on a specific area
-                aspectRatio: 1.0 
-            };
-
-            scanner.start(
-                { facingMode: "environment" }, 
-                config, 
-                (text) => selectStudent(text.trim())
-            ).catch(err => {
-                alert("Camera Error: Please ensure you have granted permissions.");
-            });
+            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: { width: 180, height: 180 } }, (text) => selectStudent(text.trim()));
         }
 
         function cancelScan() {
             document.getElementById('scanResult').style.display = 'none';
-            activeStudent = null;
             if(scanner) scanner.resume();
         }
 
@@ -225,20 +227,12 @@
             if(!activeStudent) return;
             const violation = document.getElementById('violationType').value;
             const now = Date.now();
-
-            const recentDuplicate = await db.logs
-                .where('LRN').equals(activeStudent.LRN)
-                .and(log => log.violation === violation && (now - log.timestamp) < 30000)
-                .first();
-
-            if (recentDuplicate) {
-                playSound('error');
-                alert("Duplicate entry prevented. This violation is already recorded for this student.");
-                return;
-            }
+            const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
+            if (dup) { quickShow("Duplicate entry prevented. This violation has already been recorded for this student."); return; }
 
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
             playSound('save');
+            quickShow("Violation Saved!");
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
@@ -256,8 +250,7 @@
                 }).filter(Boolean);
                 await db.students.clear();
                 await db.students.bulkPut(data);
-                const count = await db.students.count();
-                alert(`Successfully Updated! ${count} students in roster.`);
+                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students added.`);
                 await refreshUI();
             };
             reader.readAsText(file);
@@ -266,29 +259,18 @@
         async function exportData() {
             const logs = await db.logs.toArray();
             if (logs.length === 0) return;
-            
             const exportData = logs.map(l => ({
-                LRN: l.LRN,
-                Name: l.Name,
-                Grade: l.Grade,
-                Section: l.Section,
-                Violation: l.violation,
-                Date: new Date(l.timestamp).toLocaleString()
+                LRN: l.LRN, Name: l.Name, Grade: l.Grade, Section: l.Section, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
             }));
-
             const now = new Date();
-            const mm = String(now.getMonth() + 1).padStart(2, '0');
-            const dd = String(now.getDate()).padStart(2, '0');
-            const yyyy = now.getFullYear();
-            const fileName = `${mm}-${dd}-${yyyy}_Violation_Report.xlsx`;
-
+            const fileName = `${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}-${now.getFullYear()}_Violation_Report.xlsx`;
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Report");
             XLSX.writeFile(wb, fileName);
         }
 
-        async function clearLogs() { if (confirm("Clear all logs?")) { await db.logs.clear(); refreshUI(); } }
+        async function clearLogs() { if (confirm("This will delete ALL violation records. Continue?")) { await db.logs.clear(); refreshUI(); quickShow("History Cleared"); } }
     </script>
 </body>
 </html>
