@@ -17,7 +17,17 @@
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
         
-        #reader { width: 100%; border-radius: 12px; background: #000; margin-top: 10px; overflow: hidden; }
+        /* SHRUNK SCANNER STYLING */
+        #reader { 
+            width: 100%; 
+            max-width: 350px; /* Limits width on larger screens */
+            max-height: 250px; /* Keeps it from being too tall */
+            border-radius: 12px; 
+            background: #000; 
+            margin: 10px auto; 
+            overflow: hidden; 
+        }
+
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
         #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 14px; }
         
@@ -46,12 +56,12 @@
         <div id="searchList"></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="text-align: center;">
         <h3>QR Scanner</h3>
         <button id="startBtn" class="btn-primary" onclick="initScanner()">Open Camera</button>
         <div id="reader"></div>
 
-        <div id="scanResult" style="display:none;" class="result-box">
+        <div id="scanResult" style="display:none; text-align: left;" class="result-box">
             <p style="margin:0; color:#666; font-size:11px;">STUDENT IDENTIFIED:</p>
             <p style="font-size: 18px; font-weight: bold; margin: 5px 0; color: #000;"><span id="nameText"></span></p>
             <p style="margin: 0 0 15px 0; font-size:14px; color: #444; font-weight: 500;"><span id="infoText"></span></p>
@@ -112,19 +122,16 @@
             osc.connect(gain); gain.connect(audioCtx.destination);
             
             if (mode === 'scan') {
-                // High-pitch "Scan" Beep + Vibrate
                 osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.2);
                 if ("vibrate" in navigator) navigator.vibrate(200);
             } else if (mode === 'save') {
-                // Lower "Confirm" Sound, No Vibration
                 osc.frequency.setValueAtTime(600, audioCtx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
             } else {
-                // Error Sound
                 osc.type = "sawtooth";
                 osc.frequency.setValueAtTime(150, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
@@ -178,7 +185,7 @@
             document.getElementById('nameInput').value = "";
             const student = await db.students.get(lrn);
             if (student) {
-                playSound('scan'); // High beep + vibrate
+                playSound('scan');
                 activeStudent = student;
                 document.getElementById('nameText').innerText = student.Name;
                 document.getElementById('infoText').innerText = `Grade ${student.Grade} — ${student.Section}`;
@@ -191,7 +198,21 @@
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-            scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => selectStudent(text.trim()));
+
+            // CAMERA CONFIG FOR IPHONE FOCUS
+            const config = { 
+                fps: 15, 
+                qrbox: { width: 180, height: 180 }, // Smaller qrbox helps iPhone focus on a specific area
+                aspectRatio: 1.0 
+            };
+
+            scanner.start(
+                { facingMode: "environment" }, 
+                config, 
+                (text) => selectStudent(text.trim())
+            ).catch(err => {
+                alert("Camera Error: Please ensure you have granted permissions.");
+            });
         }
 
         function cancelScan() {
@@ -205,7 +226,6 @@
             const violation = document.getElementById('violationType').value;
             const now = Date.now();
 
-            // PREVENTION LOGIC: Check if this exact student + violation was saved in the last 30 seconds
             const recentDuplicate = await db.logs
                 .where('LRN').equals(activeStudent.LRN)
                 .and(log => log.violation === violation && (now - log.timestamp) < 30000)
@@ -213,17 +233,12 @@
 
             if (recentDuplicate) {
                 playSound('error');
-                alert("Duplicate entry prevented. This violation has already been recorded for this student.");
+                alert("Duplicate entry prevented. This violation is already recorded for this student.");
                 return;
             }
 
-            await db.logs.add({ 
-                ...activeStudent, 
-                violation: violation, 
-                timestamp: now 
-            });
-
-            playSound('save'); // Lower beep, no vibration
+            await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
+            playSound('save');
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
@@ -252,12 +267,14 @@
             const logs = await db.logs.toArray();
             if (logs.length === 0) return;
             
-            // Format to Excel-friendly date string
             const exportData = logs.map(l => ({
-                ...l,
-                date: new Date(l.timestamp).toLocaleString()
+                LRN: l.LRN,
+                Name: l.Name,
+                Grade: l.Grade,
+                Section: l.Section,
+                Violation: l.violation,
+                Date: new Date(l.timestamp).toLocaleString()
             }));
-            delete exportData.timestamp;
 
             const now = new Date();
             const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -275,4 +292,3 @@
     </script>
 </body>
 </html>
-
