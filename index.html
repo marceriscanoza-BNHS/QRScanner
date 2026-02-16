@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Tracker Pro</title>
+    <title>BNHS Virtual Violation Tracker</title>
     <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
@@ -21,28 +21,12 @@
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
         #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 14px; }
         
-        /* Search Styling */
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
-        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
         .search-row button { width: auto; padding: 0 20px; }
         
-        #searchList { 
-            max-height: 250px; 
-            overflow-y: auto; 
-            background: #f8f9fa; 
-            border-radius: 8px; 
-            margin-bottom: 10px; 
-            display: none; 
-            border: 1px solid #ddd;
-        }
-        .search-item { 
-            padding: 12px; 
-            border-bottom: 1px solid #eee; 
-            cursor: pointer; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-        }
+        #searchList { max-height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
+        .search-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
         .search-item:active { background: #e9ecef; }
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -57,13 +41,13 @@
     <div class="card">
         <h3>Manual Search</h3>
         <div class="search-row">
-            <input type="text" id="nameInput" placeholder="Enter Student Name...">
+            <input type="text" id="nameInput" placeholder="Enter student name...">
             <button class="btn-primary" onclick="performSearch()">Search</button>
         </div>
         <div id="searchList"></div>
+    </div>
 
-        <hr>
-        
+    <div class="card">
         <h3>QR Scanner</h3>
         <button id="startBtn" class="btn-primary" onclick="initScanner()">Open Camera</button>
         <div id="reader"></div>
@@ -83,21 +67,16 @@
                 <option value="Others">Others</option>
             </select>
             <button class="btn-success" onclick="saveRecord()">Confirm & Save</button>
-            <button class="btn-secondary" onclick="cancelScan()">Cancel / Clear</button>
+            <button class="btn-secondary" onclick="cancelScan()">Cancel</button>
         </div>
     </div>
 
     <div class="card">
-        <h3>Recent Violations</h3>
+        <h3>Recent History</h3>
         <div style="overflow-x: auto;">
             <table>
                 <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Section</th>
-                        <th>Violation</th>
-                        <th>Time</th>
-                    </tr>
+                    <tr><th>Name</th><th>Section</th><th>Violation</th><th>Time</th></tr>
                 </thead>
                 <tbody id="historyBody"></tbody>
             </table>
@@ -109,6 +88,7 @@
         <button class="btn-success" onclick="exportData()">Extract Report (Excel)</button>
         <button class="btn-danger" onclick="clearLogs()">Reset Violations</button>
         <hr>
+        <p style="font-size: 11px; margin-bottom: 5px; font-weight: bold;">Upload Roster (CSV):</p>
         <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom: 10px;">
         <button class="btn-secondary" onclick="uploadCSV()">Update Roster</button>
     </div>
@@ -122,6 +102,33 @@
 
         let scanner = null;
         let activeStudent = null;
+        let audioCtx = null;
+
+        function playSound(type) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            
+            if (type === 'success') {
+                // High-pitch prominent "Ding-Ding"
+                osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+                
+                // Vibrate if supported
+                if ("vibrate" in navigator) navigator.vibrate(200);
+            } else {
+                osc.type = "sawtooth";
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+            }
+        }
 
         document.addEventListener("DOMContentLoaded", refreshUI);
 
@@ -134,42 +141,28 @@
 
             const lastLogs = await db.logs.reverse().limit(5).toArray();
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
-                <tr>
-                    <td>${log.Name}</td>
-                    <td>${log.Section}</td>
-                    <td>${log.violation}</td>
-                    <td>${log.date.split(',')[1]}</td>
-                </tr>
+                <tr><td>${log.Name}</td><td>${log.Section}</td><td>${log.violation}</td><td>${log.date.split(',')[1]}</td></tr>
             `).join('');
         }
 
-        // --- NEW SEARCH LOGIC ---
         async function performSearch() {
             const query = document.getElementById('nameInput').value.trim().toLowerCase();
             const listDiv = document.getElementById('searchList');
-            
-            if (query.length < 2) return alert("Please enter at least 2 characters.");
+            if (query.length < 2) return;
 
-            // Performance: Filter database only when button is clicked
-            const matches = await db.students
-                .filter(s => s.Name.toLowerCase().includes(query))
-                .limit(20) // Limit results to keep it fast
-                .toArray();
+            const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(15).toArray();
 
             if (matches.length > 0) {
                 listDiv.style.display = 'block';
                 listDiv.innerHTML = matches.map(s => `
                     <div class="search-item" onclick="selectStudent('${s.LRN}')">
-                        <div>
-                            <strong>${s.Name}</strong><br>
-                            <small>${s.Grade} - ${s.Section}</small>
-                        </div>
+                        <div><strong>${s.Name}</strong><br><small>${s.Grade}-${s.Section}</small></div>
                         <span style="color:#007bff; font-weight:bold;">Select →</span>
                     </div>
                 `).join('');
             } else {
-                alert("No student found with that name.");
                 listDiv.style.display = 'none';
+                playSound('error');
             }
         }
 
@@ -178,19 +171,17 @@
             document.getElementById('nameInput').value = "";
             const student = await db.students.get(lrn);
             if (student) {
+                playSound('success');
                 activeStudent = student;
-                showResult(student);
+                document.getElementById('nameText').innerText = student.Name;
+                document.getElementById('infoText').innerText = `Grade ${student.Grade} — ${student.Section}`;
+                document.getElementById('scanResult').style.display = 'block';
+                if(scanner && scanner.isScanning) scanner.pause(true);
             }
         }
 
-        function showResult(student) {
-            document.getElementById('nameText').innerText = student.Name;
-            document.getElementById('infoText').innerText = `Grade ${student.Grade} — ${student.Section}`;
-            document.getElementById('scanResult').style.display = 'block';
-            if(scanner && scanner.isScanning) scanner.pause(true);
-        }
-
         function initScanner() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
             scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => selectStudent(text.trim()));
@@ -198,7 +189,6 @@
 
         function cancelScan() {
             document.getElementById('scanResult').style.display = 'none';
-            document.getElementById('searchList').style.display = 'none';
             activeStudent = null;
             if(scanner) scanner.resume();
         }
@@ -210,13 +200,12 @@
                 violation: document.getElementById('violationType').value, 
                 date: new Date().toLocaleString() 
             });
+            playSound('success');
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
-            alert("Violation Saved!");
         }
 
-        // Original CSV and Export functions remain the same...
         async function uploadCSV() {
             const file = document.getElementById('csvFile').files[0];
             if (!file) return;
@@ -229,19 +218,28 @@
                 }).filter(Boolean);
                 await db.students.clear();
                 await db.students.bulkPut(data);
+                const count = await db.students.count();
+                alert(`Successfully Updated! ${count} students in roster.`);
                 await refreshUI();
-                alert("Roster Updated!");
             };
             reader.readAsText(file);
         }
 
         async function exportData() {
             const logs = await db.logs.toArray();
-            if (logs.length === 0) return alert("No data to export.");
+            if (logs.length === 0) return;
+            
+            // Format: MM-DD-YYYY
+            const now = new Date();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const dd = String(now.getDate()).padStart(2, '0');
+            const yyyy = now.getFullYear();
+            const fileName = `${mm}-${dd}-${yyyy}_Violation_Report.xlsx`;
+
             const ws = XLSX.utils.json_to_sheet(logs);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Report");
-            XLSX.writeFile(wb, "Student_Violations.xlsx");
+            XLSX.writeFile(wb, fileName);
         }
 
         async function clearLogs() { if (confirm("Clear all logs?")) { await db.logs.clear(); refreshUI(); } }
