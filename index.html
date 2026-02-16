@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Tracker Pro</title>
+    <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 10px; background: #f0f2f5; color: #333; }
+        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; }
+        button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        
+        #reader { width: 100%; border-radius: 12px; background: #000; margin-top: 10px; overflow: hidden; }
+        .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
+        #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 14px; }
+        
+        /* Search Styling */
+        .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
+        .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+        .search-row button { width: auto; padding: 0 20px; }
+        
+        #searchList { 
+            max-height: 250px; 
+            overflow-y: auto; 
+            background: #f8f9fa; 
+            border-radius: 8px; 
+            margin-bottom: 10px; 
+            display: none; 
+            border: 1px solid #ddd;
+        }
+        .search-item { 
+            padding: 12px; 
+            border-bottom: 1px solid #eee; 
+            cursor: pointer; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .search-item:active { background: #e9ecef; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f8f9fa; }
+    </style>
+</head>
+<body>
+
+    <div id="status">Checking Database...</div>
+
+    <div class="card">
+        <h3>Manual Search</h3>
+        <div class="search-row">
+            <input type="text" id="nameInput" placeholder="Enter Student Name...">
+            <button class="btn-primary" onclick="performSearch()">Search</button>
+        </div>
+        <div id="searchList"></div>
+
+        <hr>
+        
+        <h3>QR Scanner</h3>
+        <button id="startBtn" class="btn-primary" onclick="initScanner()">Open Camera</button>
+        <div id="reader"></div>
+
+        <div id="scanResult" style="display:none;" class="result-box">
+            <p style="margin:0; color:#666; font-size:11px;">STUDENT IDENTIFIED:</p>
+            <p style="font-size: 18px; font-weight: bold; margin: 5px 0; color: #000;"><span id="nameText"></span></p>
+            <p style="margin: 0 0 15px 0; font-size:14px; color: #444; font-weight: 500;"><span id="infoText"></span></p>
+            
+            <label style="font-size: 12px; font-weight: bold;">Violation:</label>
+            <select id="violationType" style="width:100%; padding:12px; margin:10px 0; border-radius:8px;">
+                <option value="Improper Haircut">Improper Haircut</option>
+                <option value="Improper Uniform">Improper Uniform</option>
+                <option value="No ID">No ID Card</option>
+                <option value="Late">Tardiness</option>
+                <option value="Make Up">Excessive Make Up</option>
+                <option value="Others">Others</option>
+            </select>
+            <button class="btn-success" onclick="saveRecord()">Confirm & Save</button>
+            <button class="btn-secondary" onclick="cancelScan()">Cancel / Clear</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Recent Violations</h3>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Section</th>
+                        <th>Violation</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="historyBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Data Management</h3>
+        <button class="btn-success" onclick="exportData()">Extract Report (Excel)</button>
+        <button class="btn-danger" onclick="clearLogs()">Reset Violations</button>
+        <hr>
+        <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom: 10px;">
+        <button class="btn-secondary" onclick="uploadCSV()">Update Roster</button>
+    </div>
+
+    <script>
+        const db = new Dexie("StudentTrackerDB");
+        db.version(1).stores({
+            students: "LRN, Name, Grade, Section",
+            logs: "++id, LRN, Name, Grade, Section, violation, date"
+        });
+
+        let scanner = null;
+        let activeStudent = null;
+
+        document.addEventListener("DOMContentLoaded", refreshUI);
+
+        async function refreshUI() {
+            const studentCount = await db.students.count();
+            const logCount = await db.logs.count();
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerText = studentCount > 0 ? `✅ READY: ${studentCount} Students | ${logCount} Logs` : `⚠️ NO ROSTER: Upload CSV`;
+            statusDiv.style.background = studentCount > 0 ? "#d4edda" : "#fff3cd";
+
+            const lastLogs = await db.logs.reverse().limit(5).toArray();
+            document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
+                <tr>
+                    <td>${log.Name}</td>
+                    <td>${log.Section}</td>
+                    <td>${log.violation}</td>
+                    <td>${log.date.split(',')[1]}</td>
+                </tr>
+            `).join('');
+        }
+
+        // --- NEW SEARCH LOGIC ---
+        async function performSearch() {
+            const query = document.getElementById('nameInput').value.trim().toLowerCase();
+            const listDiv = document.getElementById('searchList');
+            
+            if (query.length < 2) return alert("Please enter at least 2 characters.");
+
+            // Performance: Filter database only when button is clicked
+            const matches = await db.students
+                .filter(s => s.Name.toLowerCase().includes(query))
+                .limit(20) // Limit results to keep it fast
+                .toArray();
+
+            if (matches.length > 0) {
+                listDiv.style.display = 'block';
+                listDiv.innerHTML = matches.map(s => `
+                    <div class="search-item" onclick="selectStudent('${s.LRN}')">
+                        <div>
+                            <strong>${s.Name}</strong><br>
+                            <small>${s.Grade} - ${s.Section}</small>
+                        </div>
+                        <span style="color:#007bff; font-weight:bold;">Select →</span>
+                    </div>
+                `).join('');
+            } else {
+                alert("No student found with that name.");
+                listDiv.style.display = 'none';
+            }
+        }
+
+        async function selectStudent(lrn) {
+            document.getElementById('searchList').style.display = 'none';
+            document.getElementById('nameInput').value = "";
+            const student = await db.students.get(lrn);
+            if (student) {
+                activeStudent = student;
+                showResult(student);
+            }
+        }
+
+        function showResult(student) {
+            document.getElementById('nameText').innerText = student.Name;
+            document.getElementById('infoText').innerText = `Grade ${student.Grade} — ${student.Section}`;
+            document.getElementById('scanResult').style.display = 'block';
+            if(scanner && scanner.isScanning) scanner.pause(true);
+        }
+
+        function initScanner() {
+            document.getElementById('startBtn').style.display = 'none';
+            scanner = new Html5Qrcode("reader");
+            scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => selectStudent(text.trim()));
+        }
+
+        function cancelScan() {
+            document.getElementById('scanResult').style.display = 'none';
+            document.getElementById('searchList').style.display = 'none';
+            activeStudent = null;
+            if(scanner) scanner.resume();
+        }
+
+        async function saveRecord() {
+            if(!activeStudent) return;
+            await db.logs.add({ 
+                ...activeStudent, 
+                violation: document.getElementById('violationType').value, 
+                date: new Date().toLocaleString() 
+            });
+            document.getElementById('scanResult').style.display = 'none';
+            await refreshUI();
+            if(scanner) scanner.resume();
+            alert("Violation Saved!");
+        }
+
+        // Original CSV and Export functions remain the same...
+        async function uploadCSV() {
+            const file = document.getElementById('csvFile').files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const rows = e.target.result.split("\n").slice(1);
+                const data = rows.map(r => {
+                    const c = r.split(",");
+                    return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
+                }).filter(Boolean);
+                await db.students.clear();
+                await db.students.bulkPut(data);
+                await refreshUI();
+                alert("Roster Updated!");
+            };
+            reader.readAsText(file);
+        }
+
+        async function exportData() {
+            const logs = await db.logs.toArray();
+            if (logs.length === 0) return alert("No data to export.");
+            const ws = XLSX.utils.json_to_sheet(logs);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Report");
+            XLSX.writeFile(wb, "Student_Violations.xlsx");
+        }
+
+        async function clearLogs() { if (confirm("Clear all logs?")) { await db.logs.clear(); refreshUI(); } }
+    </script>
+</body>
+</html>
