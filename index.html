@@ -13,13 +13,6 @@
         .header h1 { font-size: 1.4em; color: #0056b3; margin: 0; letter-spacing: 1px; }
         .header p { font-size: 0.85em; color: #666; margin: 2px 0 10px 0; }
         
-        /* LAST PROCESSED BAR */
-        #last-scanned-bar { 
-            background: #007bff; color: white; padding: 8px; border-radius: 8px; 
-            text-align: center; font-size: 13px; font-weight: bold; margin-bottom: 10px; display: none;
-            animation: fadeIn 0.5s;
-        }
-
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
         h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; }
         button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; }
@@ -28,14 +21,22 @@
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
         
+        /* IMPROVED LAST SCANNED BAR (ABOVE SCANNER) */
+        #last-scanned-bar { 
+            background: #e7f3ff; color: #007bff; padding: 10px; border-radius: 8px; 
+            text-align: center; font-size: 13px; font-weight: bold; margin-bottom: 10px; 
+            display: none; border: 1px solid #b3d7ff;
+        }
+
         #toast-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10000; }
         .toast-box { background: white; padding: 20px; border-radius: 15px; width: 80%; max-width: 300px; text-align: center; }
         
         #quick-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 10px 20px; border-radius: 20px; font-size: 12px; display: none; z-index: 9999; }
 
-        #reader { width: 100%; max-width: 350px; max-height: 250px; border-radius: 12px; background: #000; margin: 10px auto; overflow: hidden; }
+        /* SCANNER BOX */
+        #reader { width: 100%; max-width: 350px; border-radius: 12px; background: #000; margin: 0 auto; overflow: hidden; }
         .result-box { background: #fff; padding: 15px; border-radius: 10px; margin-top: 10px; border: 2px solid #007bff; }
-        #status { font-weight: bold; margin-bottom: 10px; padding: 12px; border-radius: 8px; text-align: center; font-size: 13px; }
+        #status { font-weight: bold; margin-bottom: 10px; padding: 10px; border-radius: 8px; text-align: center; font-size: 12px; }
         
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
         .search-row input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
@@ -45,7 +46,10 @@
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Animation for the bar update */
+        @keyframes highlight { 0% { background: #007bff; color: white; } 100% { background: #e7f3ff; color: #007bff; } }
+        .updated { animation: highlight 1s ease-out; }
     </style>
 </head>
 <body>
@@ -55,7 +59,6 @@
         <p>Student Monitoring & Accountability Record Tracker</p>
     </div>
 
-    <div id="last-scanned-bar"></div>
     <div id="status">Checking Database...</div>
 
     <div id="toast-overlay">
@@ -78,6 +81,8 @@
 
     <div class="card" style="text-align: center;">
         <h3>QR Scanner</h3>
+        <div id="last-scanned-bar"></div>
+        
         <button id="startBtn" class="btn-primary" onclick="initScanner()">Open Camera</button>
         <div id="reader"></div>
 
@@ -174,6 +179,10 @@
                 const bar = document.getElementById('last-scanned-bar');
                 bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
+                // Trigger flash animation
+                bar.classList.remove('updated');
+                void bar.offsetWidth; 
+                bar.classList.add('updated');
             }
             
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
@@ -215,7 +224,8 @@
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: { width: 180, height: 180 } }, (text) => selectStudent(text.trim()));
+            // LARGER focus area (250px)
+            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: 250 }, (text) => selectStudent(text.trim()));
         }
 
         function cancelScan() {
@@ -228,7 +238,7 @@
             const violation = document.getElementById('violationType').value;
             const now = Date.now();
             const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
-            if (dup) { quickShow("Duplicate entry prevented. This violation has already been recorded for this student."); return; }
+            if (dup) { quickShow("Duplicate prevented!"); return; }
 
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
             playSound('save');
@@ -250,7 +260,7 @@
                 }).filter(Boolean);
                 await db.students.clear();
                 await db.students.bulkPut(data);
-                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students added.`);
+                showNotify(`S.M.A.R.T. Roster Updated: ${await db.students.count()} students found.`);
                 await refreshUI();
             };
             reader.readAsText(file);
