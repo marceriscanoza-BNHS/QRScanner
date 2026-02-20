@@ -21,6 +21,7 @@
         .btn-secondary { background: #6c757d; color: white; }
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
+        .btn-sync { background: #6f42c1; color: white; } /* Purple for Sync */
         
         #last-scanned-bar { 
             background: #e7f3ff; color: #007bff; padding: 10px; border-radius: 8px; 
@@ -113,7 +114,7 @@
         <h3>Recent History</h3>
         <div style="overflow-x: auto;">
             <table>
-                <thead><tr><th>Name</th><th>Violation</th><th>Time</th></tr></thead>
+                <thead><tr><th>Name</th><th>Violation</th><th>Time</th><th>Sync</th></tr></thead>
                 <tbody id="historyBody"></tbody>
             </table>
         </div>
@@ -121,6 +122,7 @@
 
     <div class="card" style="text-align: center;">
         <h3>System Tools</h3>
+        <button class="btn-sync" onclick="syncToSheets()">☁️ Sync to Google Sheets</button>
         <button class="btn-success" onclick="exportData()">Extract Excel Report</button>
         <hr>
         <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom:10px;">
@@ -129,17 +131,18 @@
     </div>
 
     <script>
+        const SYNC_URL = "https://script.google.com/macros/s/AKfycbx94dTitV4GVPWetqCbmj3itY1vE3mb4wdqTDYjULqpr7ap9P-hObq9_kAUg5e58AQ3iw/exec";
+        
         const db = new Dexie("StudentTrackerDB");
-        db.version(1).stores({
+        db.version(2).stores({
             students: "LRN, Name, Grade, Section",
-            logs: "++id, LRN, Name, Grade, Section, violation, timestamp"
+            logs: "++id, LRN, Name, Grade, Section, violation, timestamp, synced"
         });
 
         let scanner = null;
         let activeStudent = null;
         let audioCtx = null;
 
-        // UI HELPER FUNCTIONS
         function showNotify(msg) {
             document.getElementById('toast-msg').innerText = msg;
             document.getElementById('toast-overlay').style.display = "flex";
@@ -152,15 +155,12 @@
             setTimeout(() => { el.style.display = "none"; }, 2500);
         }
 
-        // IMPROVED AUDIO (Wakes up on user interaction)
         async function playSound(mode) {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') await audioCtx.resume();
-            
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
-            
             if (mode === 'scan') {
                 osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
@@ -183,18 +183,25 @@
         async function refreshUI() {
             const studentCount = await db.students.count();
             const logCount = await db.logs.count();
-            document.getElementById('status').innerText = studentCount > 0 ? `DATABASE: ${studentCount} Students | ${logCount} Violations` : `⚠️ NO ROSTER DATA`;
+            const unsyncedCount = await db.logs.where('synced').equals(0).count();
+            
+            document.getElementById('status').innerText = studentCount > 0 
+                ? `DATABASE: ${studentCount} Students | ${logCount} Total (${unsyncedCount} Pending Sync)` 
+                : `⚠️ NO ROSTER DATA`;
             
             const lastLogs = await db.logs.reverse().limit(5).toArray();
             if(lastLogs.length > 0) {
                 const bar = document.getElementById('last-scanned-bar');
                 bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
-                bar.classList.add('updated');
-                setTimeout(() => bar.classList.remove('updated'), 1000);
             }
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
-                <tr><td>${log.Name}</td><td>${log.violation}</td><td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td></tr>
+                <tr>
+                    <td>${log.Name}</td>
+                    <td>${log.violation}</td>
+                    <td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                    <td>${log.synced ? '✅' : '⏳'}</td>
+                </tr>
             `).join('');
         }
 
@@ -203,7 +210,6 @@
             const listDiv = document.getElementById('searchList');
             listDiv.innerHTML = "";
             if (query.length < 2) { quickShow("Enter at least 2 characters"); return; }
-
             const matches = await db.students.filter(s => s.Name.toLowerCase().includes(query)).limit(20).toArray();
             if (matches.length > 0) {
                 listDiv.style.display = 'block';
@@ -234,22 +240,12 @@
         }
 
         function initScanner() {
-            playSound('scan'); // Force audio context awake
+            playSound('scan');
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-            const config = { 
-                fps: 15, 
-                qrbox: (w, h) => { 
-                    let size = Math.min(w, h) * 0.7; 
-                    return { width: size, height: size }; 
-                },
-                aspectRatio: 1.0 
-            };
+            const config = { fps: 15, qrbox: (w, h) => { let size = Math.min(w, h) * 0.7; return { width: size, height: size }; }, aspectRatio: 1.0 };
             scanner.start({ facingMode: "environment" }, config, (text) => selectStudent(text.trim()))
-                   .catch(err => {
-                       showNotify("Camera Error: " + err);
-                       document.getElementById('startBtn').style.display = 'block';
-                   });
+                   .catch(err => { showNotify("Camera Error: " + err); document.getElementById('startBtn').style.display = 'block'; });
         }
 
         function cancelScan() {
@@ -265,12 +261,37 @@
             
             if (dup) { playSound('error'); quickShow("Already recorded!"); return; }
 
-            await db.logs.add({ ...activeStudent, violation: violation, timestamp: now });
+            // Added 'synced: 0' for the new Google Sheets feature
+            await db.logs.add({ ...activeStudent, violation: violation, timestamp: now, synced: 0 });
             playSound('save');
             quickShow("Saved ✅");
             document.getElementById('scanResult').style.display = 'none';
             await refreshUI();
             if(scanner) scanner.resume();
+        }
+
+        async function syncToSheets() {
+            const unsynced = await db.logs.where('synced').equals(0).toArray();
+            if (unsynced.length === 0) { quickShow("Everything is up to date!"); return; }
+
+            quickShow("Syncing... ⏳");
+            try {
+                // Use 'no-cors' mode for Google Apps Script to prevent CORS errors
+                await fetch(SYNC_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    cache: 'no-cache',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(unsynced)
+                });
+                
+                // Since 'no-cors' doesn't let us read the response, we assume success if no crash
+                await db.logs.where('synced').equals(0).modify({ synced: 1 });
+                showNotify(`Sync Successful: ${unsynced.length} records pushed to Cloud.`);
+                refreshUI();
+            } catch (err) {
+                showNotify("Sync Failed: Check your internet connection.");
+            }
         }
 
         async function uploadCSV() {
@@ -284,14 +305,12 @@
                         const c = r.split(",");
                         return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
                     }).filter(Boolean);
-                    if (data.length === 0) throw new Error("File empty or invalid format");
+                    if (data.length === 0) throw new Error("File empty");
                     await db.students.clear();
                     await db.students.bulkPut(data);
                     showNotify(`Success: ${data.length} students imported.`);
                     await refreshUI();
-                } catch (err) {
-                    showNotify("Import Failed: Ensure CSV is LRN,Name,Grade,Section");
-                }
+                } catch (err) { showNotify("Import Failed"); }
             };
             reader.readAsText(file);
         }
@@ -310,7 +329,6 @@
 
         async function clearLogs() { if (confirm("Delete all violation history?")) { await db.logs.clear(); refreshUI(); quickShow("All records wiped"); } }
 
-        // CAMERA CLEANUP ON EXIT
         window.addEventListener('beforeunload', () => { if(scanner) scanner.stop(); });
     </script>
 </body>
