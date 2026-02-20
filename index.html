@@ -17,6 +17,8 @@
         h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 8px; color: #0056b3; text-align: center; }
         button { width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: bold; margin: 5px 0; font-size: 14px; cursor: pointer; transition: opacity 0.2s; }
         button:active { opacity: 0.7; }
+        button:disabled { background: #ccc !important; cursor: not-allowed; opacity: 0.6; }
+        
         .btn-primary { background: #007bff; color: white; }
         .btn-secondary { background: #6c757d; color: white; }
         .btn-success { background: #28a745; color: white; }
@@ -46,7 +48,6 @@
         
         #searchList { max-height: 220px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; display: none; border: 1px solid #ddd; }
         .search-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; }
-        .close-search { background: #fdfdfd; color: #dc3545; border: 1px solid #eee; font-size: 11px; padding: 8px; cursor: pointer; border-radius: 5px; width: 100%; }
 
         table { width: 100%; border-collapse: collapse; font-size: 11px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -119,7 +120,7 @@
 
     <div class="card" style="text-align: center;">
         <h3>System Tools</h3>
-        <button class="btn-sync" onclick="syncToSheets()">☁️ Sync to Google Sheets</button>
+        <button id="syncBtn" class="btn-sync" onclick="syncToSheets()">☁️ Sync to Google Sheets</button>
         <button class="btn-success" onclick="exportData()">Extract Excel Report</button>
         <hr>
         <input type="file" id="csvFile" accept=".csv" style="font-size: 11px; margin-bottom:10px;">
@@ -128,7 +129,7 @@
     </div>
 
     <script>
-        // YOUR UPDATED GOOGLE SCRIPT URL
+        // --- PUT YOUR NEW URL HERE ---
         const SYNC_URL = "https://script.google.com/macros/s/AKfycbyvBDzkliD44BPjLtgCLlX3jKrI1VlOymfU7l80asrvIWU-Z7pUP5P5ztdGOL2-OUfA6w/exec";
         
         const db = new Dexie("StudentTrackerDB");
@@ -184,13 +185,13 @@
             const unsyncedCount = await db.logs.where('synced').equals(0).count();
             
             document.getElementById('status').innerText = studentCount > 0 
-                ? `ROSTER: ${studentCount} | LOGS: ${logCount} (${unsyncedCount} Unsynced)` 
+                ? `ROSTER: ${studentCount} | LOGS: ${logCount} (${unsyncedCount} Pending)` 
                 : `⚠️ NO ROSTER DATA`;
             
             const lastLogs = await db.logs.reverse().limit(5).toArray();
             if(lastLogs.length > 0) {
                 const bar = document.getElementById('last-scanned-bar');
-                bar.innerText = `LAST SCANNED: ${lastLogs[0].Name}`;
+                bar.innerText = `LAST LOGGED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
             }
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
@@ -198,7 +199,7 @@
                     <td>${log.Name}</td>
                     <td>${log.violation}</td>
                     <td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                    <td style="text-align:center">${log.synced ? '✅' : '⏳'}</td>
+                    <td>${log.synced ? '✅' : '⏳'}</td>
                 </tr>
             `).join('');
         }
@@ -214,15 +215,11 @@
                 listDiv.innerHTML = matches.map(s => `
                     <div class="search-item" onclick="selectStudent('${s.LRN}')">
                         <strong>${s.Name}</strong><small>${s.Grade} - ${s.Section}</small>
-                        <span style="color:#007bff; font-size:11px; font-weight:bold;">[ SELECT ]</span>
-                    </div>`).join('') + `<button class="close-search" onclick="closeSearchList()">✖ Close</button>`;
+                    </div>`).join('') + `<button class="btn-danger" style="padding:5px; font-size:10px;" onclick="closeSearchList()">Close</button>`;
             } else { quickShow("No matches found"); }
         }
 
-        function closeSearchList() {
-            document.getElementById('searchList').style.display = 'none';
-            document.getElementById('nameInput').value = "";
-        }
+        function closeSearchList() { document.getElementById('searchList').style.display = 'none'; }
 
         async function selectStudent(lrn) {
             closeSearchList();
@@ -238,12 +235,10 @@
         }
 
         function initScanner() {
-            playSound('scan');
             document.getElementById('startBtn').style.display = 'none';
             scanner = new Html5Qrcode("reader");
-            const config = { fps: 15, qrbox: (w, h) => { let size = Math.min(w, h) * 0.7; return { width: size, height: size }; }, aspectRatio: 1.0 };
-            scanner.start({ facingMode: "environment" }, config, (text) => selectStudent(text.trim()))
-                   .catch(err => { showNotify("Camera Error: " + err); document.getElementById('startBtn').style.display = 'block'; });
+            scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: 250 }, (text) => selectStudent(text.trim()))
+                   .catch(() => { showNotify("Camera Error"); document.getElementById('startBtn').style.display = 'block'; });
         }
 
         function cancelScan() {
@@ -255,8 +250,9 @@
             if(!activeStudent) return;
             const violation = document.getElementById('violationType').value;
             const now = Date.now();
-            const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
             
+            // Front-end duplicate check (30 seconds)
+            const dup = await db.logs.where('LRN').equals(activeStudent.LRN).and(l => l.violation === violation && (now - l.timestamp) < 30000).first();
             if (dup) { playSound('error'); quickShow("Already recorded!"); return; }
 
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now, synced: 0 });
@@ -268,18 +264,16 @@
         }
 
         async function syncToSheets() {
-            if (!navigator.onLine) { 
-                showNotify("No Internet: Please connect to Wi-Fi to sync."); 
-                return; 
-            }
-
+            if (!navigator.onLine) { showNotify("No Internet Connection"); return; }
+            
+            const btn = document.getElementById('syncBtn');
             const unsynced = await db.logs.where('synced').equals(0).toArray();
-            if (unsynced.length === 0) { 
-                quickShow("No new records to sync."); 
-                return; 
-            }
+            if (unsynced.length === 0) { quickShow("Nothing to sync"); return; }
 
-            quickShow("Syncing to Cloud... ⏳");
+            // COOLDOWN START
+            btn.disabled = true;
+            btn.innerText = "Syncing... ⏳";
+
             try {
                 await fetch(SYNC_URL, {
                     method: 'POST',
@@ -289,55 +283,49 @@
                     body: JSON.stringify(unsynced)
                 });
                 
-                // Update local status
                 await db.logs.where('synced').equals(0).modify({ synced: 1 });
-                showNotify(`Success! ${unsynced.length} records sent to Google Sheets.`);
+                showNotify(`Success! ${unsynced.length} records synced.`);
                 await refreshUI();
             } catch (err) {
-                console.error(err);
-                showNotify("Sync Failed. Please check your connection.");
+                showNotify("Sync Failed. Try again.");
+            } finally {
+                // COOLDOWN END (2 seconds)
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerText = "☁️ Sync to Google Sheets";
+                }, 2000);
             }
         }
 
         async function uploadCSV() {
             const file = document.getElementById('csvFile').files[0];
-            if (!file) { quickShow("Choose a file first"); return; }
+            if (!file) return;
             const reader = new FileReader();
             reader.onload = async (e) => {
-                try {
-                    const rows = e.target.result.split("\n").slice(1);
-                    const data = rows.map(r => {
-                        const c = r.split(",");
-                        return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
-                    }).filter(Boolean);
-                    if (data.length === 0) throw new Error("File empty");
-                    await db.students.clear();
-                    await db.students.bulkPut(data);
-                    showNotify(`Success: ${data.length} students imported.`);
-                    await refreshUI();
-                } catch (err) { showNotify("Import Failed"); }
+                const rows = e.target.result.split("\n").slice(1);
+                const data = rows.map(r => {
+                    const c = r.split(",");
+                    return c.length >= 4 ? { LRN: c[0].trim(), Name: c[1].trim(), Grade: c[2].trim(), Section: c[3].trim() } : null;
+                }).filter(Boolean);
+                await db.students.clear();
+                await db.students.bulkPut(data);
+                showNotify(`Imported ${data.length} students.`);
+                refreshUI();
             };
             reader.readAsText(file);
         }
 
         async function exportData() {
             const logs = await db.logs.toArray();
-            if (logs.length === 0) { quickShow("No history to export"); return; }
-            const exportData = logs.map(l => ({
-                LRN: l.LRN, Name: l.Name, Grade: l.Grade, Section: l.Section, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
-            }));
-            const ws = XLSX.utils.json_to_sheet(exportData);
+            const ws = XLSX.utils.json_to_sheet(logs.map(l => ({
+                LRN: l.LRN, Name: l.Name, Violation: l.violation, Date: new Date(l.timestamp).toLocaleString()
+            })));
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Violations");
-            XLSX.writeFile(wb, `SMART_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+            XLSX.utils.book_append_sheet(wb, ws, "Logs");
+            XLSX.writeFile(wb, "SMART_Report.xlsx");
         }
 
-        async function clearLogs() { if (confirm("Delete all violation history?")) { await db.logs.clear(); refreshUI(); quickShow("All records wiped"); } }
-
-        window.addEventListener('beforeunload', () => { if(scanner) scanner.stop(); });
+        async function clearLogs() { if (confirm("Clear all?")) { await db.logs.clear(); refreshUI(); } }
     </script>
 </body>
 </html>
-
-
-
