@@ -21,7 +21,7 @@
         .btn-secondary { background: #6c757d; color: white; }
         .btn-success { background: #28a745; color: white; }
         .btn-danger { background: #dc3545; color: white; }
-        .btn-sync { background: #6f42c1; color: white; } /* Purple for Sync */
+        .btn-sync { background: #6f42c1; color: white; } 
         
         #last-scanned-bar { 
             background: #e7f3ff; color: #007bff; padding: 10px; border-radius: 8px; 
@@ -53,9 +53,6 @@
 
         #toast-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10000; }
         .toast-box { background: white; padding: 20px; border-radius: 15px; width: 80%; max-width: 300px; text-align: center; }
-
-        @keyframes highlight { 0% { background: #007bff; color: white; } 100% { background: #e7f3ff; color: #007bff; } }
-        .updated { animation: highlight 1s ease-out; }
     </style>
 </head>
 <body>
@@ -65,7 +62,7 @@
         <p>Student Monitoring & Accountability Record Tracker</p>
     </div>
 
-    <div id="status">Syncing Database...</div>
+    <div id="status">Loading...</div>
 
     <div id="toast-overlay">
         <div class="toast-box">
@@ -131,7 +128,8 @@
     </div>
 
     <script>
-        const SYNC_URL = "https://script.google.com/macros/s/AKfycbx94dTitV4GVPWetqCbmj3itY1vE3mb4wdqTDYjULqpr7ap9P-hObq9_kAUg5e58AQ3iw/exec";
+        // YOUR UPDATED GOOGLE SCRIPT URL
+        const SYNC_URL = "https://script.google.com/macros/s/AKfycbyFJ_275QxhzE1fNuoyLrci0vCMoLY9MdhRdf4dJDpPEfjUoLhpK2-Wrpzo36M8ABsSng/exec";
         
         const db = new Dexie("StudentTrackerDB");
         db.version(2).stores({
@@ -186,13 +184,13 @@
             const unsyncedCount = await db.logs.where('synced').equals(0).count();
             
             document.getElementById('status').innerText = studentCount > 0 
-                ? `DATABASE: ${studentCount} Students | ${logCount} Total (${unsyncedCount} Pending Sync)` 
+                ? `ROSTER: ${studentCount} | LOGS: ${logCount} (${unsyncedCount} Unsynced)` 
                 : `⚠️ NO ROSTER DATA`;
             
             const lastLogs = await db.logs.reverse().limit(5).toArray();
             if(lastLogs.length > 0) {
                 const bar = document.getElementById('last-scanned-bar');
-                bar.innerText = `LAST RECORDED: ${lastLogs[0].Name}`;
+                bar.innerText = `LAST SCANNED: ${lastLogs[0].Name}`;
                 bar.style.display = 'block';
             }
             document.getElementById('historyBody').innerHTML = lastLogs.map(log => `
@@ -200,7 +198,7 @@
                     <td>${log.Name}</td>
                     <td>${log.violation}</td>
                     <td>${new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                    <td>${log.synced ? '✅' : '⏳'}</td>
+                    <td style="text-align:center">${log.synced ? '✅' : '⏳'}</td>
                 </tr>
             `).join('');
         }
@@ -261,7 +259,6 @@
             
             if (dup) { playSound('error'); quickShow("Already recorded!"); return; }
 
-            // Added 'synced: 0' for the new Google Sheets feature
             await db.logs.add({ ...activeStudent, violation: violation, timestamp: now, synced: 0 });
             playSound('save');
             quickShow("Saved ✅");
@@ -271,12 +268,19 @@
         }
 
         async function syncToSheets() {
-            const unsynced = await db.logs.where('synced').equals(0).toArray();
-            if (unsynced.length === 0) { quickShow("Everything is up to date!"); return; }
+            if (!navigator.onLine) { 
+                showNotify("No Internet: Please connect to Wi-Fi to sync."); 
+                return; 
+            }
 
-            quickShow("Syncing... ⏳");
+            const unsynced = await db.logs.where('synced').equals(0).toArray();
+            if (unsynced.length === 0) { 
+                quickShow("No new records to sync."); 
+                return; 
+            }
+
+            quickShow("Syncing to Cloud... ⏳");
             try {
-                // Use 'no-cors' mode for Google Apps Script to prevent CORS errors
                 await fetch(SYNC_URL, {
                     method: 'POST',
                     mode: 'no-cors',
@@ -285,12 +289,13 @@
                     body: JSON.stringify(unsynced)
                 });
                 
-                // Since 'no-cors' doesn't let us read the response, we assume success if no crash
+                // Update local status
                 await db.logs.where('synced').equals(0).modify({ synced: 1 });
-                showNotify(`Sync Successful: ${unsynced.length} records pushed to Cloud.`);
-                refreshUI();
+                showNotify(`Success! ${unsynced.length} records sent to Google Sheets.`);
+                await refreshUI();
             } catch (err) {
-                showNotify("Sync Failed: Check your internet connection.");
+                console.error(err);
+                showNotify("Sync Failed. Please check your connection.");
             }
         }
 
